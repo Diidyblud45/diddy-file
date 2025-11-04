@@ -31,6 +31,7 @@ local REMOTE_EVENT_NAME = "CountdownEvent"
 
 local OVERHEAD_GUI_NAME = "DeathBillboard"
 local OVERHEAD_LABEL_NAME = "TimerLabel"
+local OVERHEAD_DEFAULT_TEXT = "You will die soon..."
 
 local countdownStates: {[Player]: {
     player: Player,
@@ -60,6 +61,9 @@ end
 type DeathEventFn = (player: Player, character: Model) -> ()
 
 local function cleanupRunner(state)
+    if not state then
+        return
+    end
     if state.runner then
         task.cancel(state.runner)
         state.runner = nil
@@ -70,20 +74,16 @@ local function cleanupRunner(state)
     end
 end
 
+local function formatTime(seconds: number): string
+    local clamped = math.max(0, math.floor(seconds + 0.5))
+    local minutes = math.floor(clamped / 60)
+    local remainingSecs = clamped % 60
+    return string.format("%02d:%02d", minutes, remainingSecs)
+end
+
 local function resetAttributes(player: Player)
     player:SetAttribute("DeathDeadline", nil)
     player:SetAttribute("DeathDuration", nil)
-end
-
-local function cancelCountdown(player: Player)
-    local state = countdownStates[player]
-    if state then
-        state.cancelled = true
-        cleanupRunner(state)
-        countdownStates[player] = nil
-    end
-    resetAttributes(player)
-    countdownEvent:FireClient(player, "Reset")
 end
 
 local function ensureOverheadGui(character: Model, player: Player)
@@ -118,10 +118,59 @@ local function ensureOverheadGui(character: Model, player: Player)
     label.TextScaled = true
     label.TextStrokeTransparency = 0.25
     label.TextStrokeColor3 = Color3.new(0, 0, 0)
-    label.Text = "You will die soon..."
+    label.Text = OVERHEAD_DEFAULT_TEXT
     label.Parent = billboard
 
     return billboard
+end
+
+local function applyOverheadText(player: Player, character: Model?, text: string)
+    character = character or player.Character
+    if not character then
+        return
+    end
+
+    local billboard = ensureOverheadGui(character, player)
+    if not billboard then
+        return
+    end
+
+    local label = billboard:FindFirstChild(OVERHEAD_LABEL_NAME)
+    if label and label:IsA("TextLabel") then
+        label.Text = text
+    end
+end
+
+local function updateOverheadCountdown(state, overrideRemaining: number?)
+    if not state then
+        return
+    end
+
+    local remaining = overrideRemaining
+    if remaining == nil then
+        remaining = state.deadline - workspace:GetServerTimeNow()
+    end
+
+    remaining = math.max(0, remaining)
+    applyOverheadText(state.player, state.character, string.format("You will die in %s", formatTime(remaining)))
+end
+
+local function resetOverheadCountdown(player: Player, character: Model?)
+    applyOverheadText(player, character, OVERHEAD_DEFAULT_TEXT)
+end
+
+local function cancelCountdown(player: Player)
+    local state = countdownStates[player]
+    if state then
+        state.cancelled = true
+        cleanupRunner(state)
+        resetOverheadCountdown(player, state.character)
+        countdownStates[player] = nil
+    else
+        resetOverheadCountdown(player, player.Character)
+    end
+    resetAttributes(player)
+    countdownEvent:FireClient(player, "Reset")
 end
 
 local function humanoidFromCharacter(character: Model?): Humanoid?
@@ -433,6 +482,7 @@ local function triggerDeathEvent(player: Player, character: Model)
     if not state or state.cancelled then
         return
     end
+    updateOverheadCountdown(state, 0)
     state.cancelled = true
     cleanupRunner(state)
     countdownStates[player] = nil
@@ -455,6 +505,14 @@ local function triggerDeathEvent(player: Player, character: Model)
         end
     end
 
+    if humanoid then
+        if humanoid.Health > 0 then
+            humanoid.Health = 0
+        end
+    elseif character then
+        character:BreakJoints()
+    end
+
     countdownEvent:FireClient(player, "Event", eventKey, eventData.description)
     resetAttributes(player)
 end
@@ -463,7 +521,9 @@ local function runCountdown(state)
     state.runner = task.spawn(function()
         while not state.cancelled do
             local remaining = state.deadline - workspace:GetServerTimeNow()
+            updateOverheadCountdown(state, remaining)
             if remaining <= 0 then
+                updateOverheadCountdown(state, 0)
                 break
             end
             task.wait(math.clamp(remaining, 0.25, 1))
@@ -494,6 +554,8 @@ local function startCountdown(player: Player, character: Model)
         character = character,
         deadline = deadline,
         cancelled = false,
+        runner = nil,
+        humanoidDiedConn = nil,
     }
     countdownStates[player] = state
 
@@ -501,6 +563,7 @@ local function startCountdown(player: Player, character: Model)
     player:SetAttribute("DeathDeadline", deadline)
 
     countdownEvent:FireClient(player, "Start", duration, deadline)
+    updateOverheadCountdown(state, duration)
 
     local humanoid = humanoidFromCharacter(character)
     if humanoid then
@@ -517,7 +580,13 @@ local function onCharacterAdded(player: Player, character: Model)
     if billboard then
         local label = billboard:FindFirstChild(OVERHEAD_LABEL_NAME)
         if label and label:IsA("TextLabel") then
-            label.Text = "You will die soon..."
+            local deadline = player:GetAttribute("DeathDeadline")
+            if deadline then
+                local remaining = math.max(0, deadline - workspace:GetServerTimeNow())
+                label.Text = string.format("You will die in %s", formatTime(remaining))
+            else
+                label.Text = OVERHEAD_DEFAULT_TEXT
+            end
         end
     end
 
