@@ -118,7 +118,7 @@ local function ensureOverheadGui(character: Model, player: Player)
     label.TextScaled = true
     label.TextStrokeTransparency = 0.25
     label.TextStrokeColor3 = Color3.new(0, 0, 0)
-    label.Text = "You will die soon..."
+    label.Text = "Awaiting your fate"
     label.Parent = billboard
 
     return billboard
@@ -150,7 +150,7 @@ local function lightningStrike(player: Player, character: Model)
     bolt.Transparency = 0
     bolt.Size = Vector3.new(0.35, 30, 0.35)
     bolt.CFrame = CFrame.new(targetCFrame.Position, character:GetPivot().Position)
-    bolt.Parent = workspace.Terrain
+    bolt.Parent = workspace
 
     local light = Instance.new("PointLight")
     light.Brightness = 6
@@ -240,7 +240,13 @@ local function meteorStrike(player: Player, character: Model)
     sound.Parent = meteor
     sound:Play()
 
+    local impacted = false
+
     local function impact()
+        if impacted then
+            return
+        end
+        impacted = true
         if bodyVelocity.Parent then
             bodyVelocity:Destroy()
         end
@@ -291,9 +297,10 @@ local function meteorStrike(player: Player, character: Model)
     end
 
     meteor.Touched:Connect(function(part)
-        if part:IsDescendantOf(character) then
-            impact()
-        elseif part:IsA("Terrain") or part.CanCollide then
+        if impacted then
+            return
+        end
+        if part:IsDescendantOf(character) or part:IsA("Terrain") or part.CanCollide then
             impact()
         end
     end)
@@ -362,7 +369,9 @@ local function collapseStructure(player: Player, character: Model)
         if part:IsA("BasePart") then
             local attachment = Instance.new("Attachment")
             attachment.Parent = part
-            dustEmitter:Clone().Parent = attachment
+            local emitterClone = dustEmitter:Clone()
+            emitterClone.Parent = attachment
+            emitterClone:Emit(rng:NextInteger(12, 22))
         end
     end
 
@@ -497,7 +506,7 @@ local function onCharacterAdded(player: Player, character: Model)
     if billboard then
         local label = billboard:FindFirstChild(OVERHEAD_LABEL_NAME)
         if label and label:IsA("TextLabel") then
-            label.Text = "You will die soon..."
+            label.Text = "Awaiting your fate"
         end
     end
 

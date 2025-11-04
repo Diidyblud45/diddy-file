@@ -24,6 +24,8 @@ local OVERHEAD_LABEL_NAME = "TimerLabel"
 local remotesFolder = ReplicatedStorage:WaitForChild(REMOTE_FOLDER_NAME)
 local countdownEvent = remotesFolder:WaitForChild(REMOTE_EVENT_NAME)
 
+local DEFAULT_OVERHEAD_TEXT = "Awaiting your fate"
+
 local ui = Instance.new("ScreenGui")
 ui.Name = "DeathDateHUD"
 ui.ResetOnSpawn = false
@@ -161,19 +163,31 @@ local function updateOverheadText()
     local serverTime = workspace:GetServerTimeNow()
     for _, player in ipairs(Players:GetPlayers()) do
         local deadline = player:GetAttribute("DeathDeadline")
-        if deadline then
-            local remaining = math.max(0, deadline - serverTime)
-            local character = player.Character
-            if character then
-                local head = character:FindFirstChild("Head")
-                local billboard = head and head:FindFirstChild(OVERHEAD_GUI_NAME)
-                local label = billboard and billboard:FindFirstChild(OVERHEAD_LABEL_NAME)
-                if label and label:IsA("TextLabel") then
+        local character = player.Character
+        if character then
+            local head = character:FindFirstChild("Head")
+            local billboard = head and head:FindFirstChild(OVERHEAD_GUI_NAME)
+            local label = billboard and billboard:FindFirstChild(OVERHEAD_LABEL_NAME)
+            if label and label:IsA("TextLabel") then
+                if deadline then
+                    local remaining = math.max(0, deadline - serverTime)
                     label.Text = string.format("You will die in %s", formatTime(remaining))
+                else
+                    label.Text = DEFAULT_OVERHEAD_TEXT
                 end
             end
         end
     end
+end
+
+local function connectPlayerSignals(player: Player)
+    player:GetAttributeChangedSignal("DeathDeadline"):Connect(function()
+        updateOverheadText()
+    end)
+    player.CharacterAdded:Connect(function()
+        task.wait(0.1)
+        updateOverheadText()
+    end)
 end
 
 countdownEvent.OnClientEvent:Connect(function(action, ...)
@@ -220,11 +234,11 @@ task.spawn(function()
     end
 end)
 
-Players.PlayerAdded:Connect(function(player)
-    player:GetAttributeChangedSignal("DeathDeadline"):Connect(function()
-        updateOverheadText()
-    end)
-end)
+Players.PlayerAdded:Connect(connectPlayerSignals)
+
+for _, player in ipairs(Players:GetPlayers()) do
+    connectPlayerSignals(player)
+end
 
 -- Initialize in case players are already in the server when we join.
 updateOverheadText()
