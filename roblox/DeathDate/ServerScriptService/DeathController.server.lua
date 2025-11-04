@@ -310,9 +310,11 @@ local function collapseStructure(player: Player, character: Model)
     local assetFolder = ServerStorage:FindFirstChild("DeathDateAssets")
     local prefab = assetFolder and assetFolder:FindFirstChild("CollapsingBuilding")
     local collapseModel: Model
+    local usingPrefab = false
 
     if prefab and prefab:IsA("Model") then
         collapseModel = prefab:Clone()
+        usingPrefab = true
     else
         collapseModel = Instance.new("Model")
         collapseModel.Name = "CollapsingBuilding"
@@ -344,6 +346,16 @@ local function collapseStructure(player: Player, character: Model)
 
     collapseModel.Parent = workspace
 
+    if usingPrefab then
+        local targetCFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, math.rad(rng:NextInteger(-12, 12)), 0)
+        local success, err = pcall(function()
+            collapseModel:PivotTo(targetCFrame)
+        end)
+        if not success then
+            warn(string.format("[DeathDate] Failed to pivot collapse prefab for %s: %s", player.Name, err))
+        end
+    end
+
     local rumble = Instance.new("Sound")
     rumble.SoundId = "rbxassetid://1843529558"
     rumble.Volume = 1.2
@@ -358,11 +370,15 @@ local function collapseStructure(player: Player, character: Model)
     dustEmitter.Lifetime = NumberRange.new(1.2, 1.8)
     dustEmitter.Rate = 0
 
+    local dustEmitters = {} :: {ParticleEmitter}
+
     for _, part in collapseModel:GetChildren() do
         if part:IsA("BasePart") then
             local attachment = Instance.new("Attachment")
             attachment.Parent = part
-            dustEmitter:Clone().Parent = attachment
+            local emitter = dustEmitter:Clone()
+            emitter.Parent = attachment
+            table.insert(dustEmitters, emitter)
         end
     end
 
@@ -372,6 +388,10 @@ local function collapseStructure(player: Player, character: Model)
                 part.Anchored = false
                 part.CanCollide = true
             end
+        end
+
+        for _, emitter in ipairs(dustEmitters) do
+            emitter:Emit(rng:NextInteger(40, 70))
         end
     end)
 
