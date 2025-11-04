@@ -20,6 +20,7 @@ local REMOTE_FOLDER_NAME = "DeathDateRemotes"
 local REMOTE_EVENT_NAME = "CountdownEvent"
 local OVERHEAD_GUI_NAME = "DeathBillboard"
 local OVERHEAD_LABEL_NAME = "TimerLabel"
+local OVERHEAD_DEFAULT_TEXT = "You will die soon..."
 
 local remotesFolder = ReplicatedStorage:WaitForChild(REMOTE_FOLDER_NAME)
 local countdownEvent = remotesFolder:WaitForChild(REMOTE_EVENT_NAME)
@@ -161,15 +162,17 @@ local function updateOverheadText()
     local serverTime = workspace:GetServerTimeNow()
     for _, player in ipairs(Players:GetPlayers()) do
         local deadline = player:GetAttribute("DeathDeadline")
-        if deadline then
-            local remaining = math.max(0, deadline - serverTime)
-            local character = player.Character
-            if character then
-                local head = character:FindFirstChild("Head")
-                local billboard = head and head:FindFirstChild(OVERHEAD_GUI_NAME)
-                local label = billboard and billboard:FindFirstChild(OVERHEAD_LABEL_NAME)
-                if label and label:IsA("TextLabel") then
+        local character = player.Character
+        if character then
+            local head = character:FindFirstChild("Head")
+            local billboard = head and head:FindFirstChild(OVERHEAD_GUI_NAME)
+            local label = billboard and billboard:FindFirstChild(OVERHEAD_LABEL_NAME)
+            if label and label:IsA("TextLabel") then
+                if deadline then
+                    local remaining = math.max(0, deadline - serverTime)
                     label.Text = string.format("You will die in %s", formatTime(remaining))
+                else
+                    label.Text = OVERHEAD_DEFAULT_TEXT
                 end
             end
         end
@@ -185,6 +188,7 @@ countdownEvent.OnClientEvent:Connect(function(action, ...)
         countdownLabel.Text = string.format("You will die in %s", formatTime(duration))
         subtitleLabel.Text = "Await your fate"
         easeCountdownFrame(true)
+        updateOverheadText()
     elseif action == "Reset" then
         countdownState.active = false
         countdownState.deadline = 0
@@ -192,6 +196,7 @@ countdownEvent.OnClientEvent:Connect(function(action, ...)
         subtitleLabel.Text = ""
         countdownLabel.Text = ""
         easeCountdownFrame(false)
+        updateOverheadText()
     elseif action == "Event" then
         local eventKey, description = ...
         countdownState.active = false
@@ -200,6 +205,7 @@ countdownEvent.OnClientEvent:Connect(function(action, ...)
         subtitleLabel.Text = ""
         easeCountdownFrame(false)
         showEventMessage(description)
+        updateOverheadText()
     end
 end)
 
@@ -225,6 +231,12 @@ Players.PlayerAdded:Connect(function(player)
         updateOverheadText()
     end)
 end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+    player:GetAttributeChangedSignal("DeathDeadline"):Connect(function()
+        updateOverheadText()
+    end)
+end
 
 -- Initialize in case players are already in the server when we join.
 updateOverheadText()
