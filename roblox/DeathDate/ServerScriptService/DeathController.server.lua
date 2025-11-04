@@ -150,7 +150,7 @@ local function lightningStrike(player: Player, character: Model)
     bolt.Transparency = 0
     bolt.Size = Vector3.new(0.35, 30, 0.35)
     bolt.CFrame = CFrame.new(targetCFrame.Position, character:GetPivot().Position)
-    bolt.Parent = workspace.Terrain
+    bolt.Parent = workspace
 
     local light = Instance.new("PointLight")
     light.Brightness = 6
