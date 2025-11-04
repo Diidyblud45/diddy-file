@@ -1,0 +1,261 @@
+{
+  "name": "Wholesale Deal Analyzer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wholesale-eval",
+        "responseMode": "responseNode",
+        "options": {
+          "responseContentType": "application/json"
+        }
+      },
+      "id": "1",
+      "name": "Inbound Lead",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const MIN_SQFT = 800;\nconst toNumber = (value) => {\n  const num = Number(value);\n  return Number.isFinite(num) ? num : 0;\n};\nreturn items.map(item => {\n  const payload = item.json.body || item.json;\n  const lead = {\n    address: payload.address ? String(payload.address).trim() : '',\n    city: payload.city ? String(payload.city).trim() : '',\n    state: payload.state ? String(payload.state).trim() : '',\n    zip: payload.zip ? String(payload.zip).trim() : '',\n    bedrooms: toNumber(payload.bedrooms),\n    bathrooms: toNumber(payload.bathrooms),\n    sqft: toNumber(payload.sqft),\n    condition: (payload.condition || 'medium').toString().toLowerCase(),\n    occupiedStatus: payload.occupiedStatus,\n    hasInteriorPhotos: payload.hasInteriorPhotos,\n    sellerAsk: payload.sellerAsk !== undefined && payload.sellerAsk !== null && payload.sellerAsk !== '' ? toNumber(payload.sellerAsk) : null,\n    notes: payload.notes || ''\n  };\n  const response = {\n    lead,\n    minSqft: MIN_SQFT,\n    repairRate: 30,\n    requiredPrompts: [\n      'Is the property occupied or vacant?',\n      'Do you have interior photos or condition notes?',\n      \"What is the seller's asking price?\"\n    ],\n    rawPayload: payload\n  };\n  const conditionRates = {\n    light: 15,\n    medium: 30,\n    heavy: 45,\n    full: 60,\n    'full rehab': 60,\n    'full-rehab': 60,\n    gut: 60\n  };\n  if (conditionRates[lead.condition]) {\n    response.repairRate = conditionRates[lead.condition];\n  }\n  const missingBasic = [];\n  ['address', 'city', 'state'].forEach(field => {\n    if (!lead[field]) missingBasic.push(field);\n  });\n  const missingRequired = ['occupiedStatus', 'hasInteriorPhotos', 'sellerAsk'].filter(field => payload[field] === undefined || payload[field] === '');\n  const blockers = [];\n  if (missingBasic.length) {\n    blockers.push(`Provide ${missingBasic.join(', ')} so we can underwrite the address correctly.`);\n  }\n  if (missingRequired.length) {\n    response.missingFields = missingRequired;\n    blockers.push(`Need ${missingRequired.join(', ')} before underwriting.`);\n  }\n  if (!lead.sqft || lead.sqft < MIN_SQFT) {\n    response.needsSqft = true;\n    blockers.push(`Subject property must be at least ${MIN_SQFT} sqft. Currently we have ${lead.sqft || 'no'} sqft.`);\n  }\n  if (blockers.length) {\n    response.needsInfo = true;\n    response.blockers = blockers;\n  }\n  return { json: response };\n});"
+      },
+      "id": "2",
+      "name": "Validate Lead",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        470,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.needsInfo}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "3",
+      "name": "Check Required Fields",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map(item => {\n  const blockers = item.json.blockers || [];\n  const messageParts = blockers.length ? blockers : ['Missing required property details.'];\n  return {\n    json: {\n      status: 'needs-info',\n      message: messageParts.join(' '),\n      missingFields: item.json.missingFields || [],\n      minSqft: item.json.minSqft,\n      prompts: item.json.requiredPrompts || [\n        'Is the property occupied or vacant?',\n        'Do you have interior photos or condition notes?',\n        \"What is the seller's asking price?\"\n      ]\n    }\n  };\n});"
+      },
+      "id": "4",
+      "name": "Need Info Reply",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        950,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "responseBody": "={{$json}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "5",
+      "name": "Respond Need Info",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1190,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.estated.com/property/v3",
+        "responseFormat": "json",
+        "queryParametersUi": {
+          "parameter": [
+            {
+              "name": "token",
+              "value": "={{$env.ESTATED_API_KEY}}"
+            },
+            {
+              "name": "address",
+              "value": "={{$item(0).$node[\"Validate Lead\"].json.lead.address}}"
+            },
+            {
+              "name": "city",
+              "value": "={{$item(0).$node[\"Validate Lead\"].json.lead.city}}"
+            },
+            {
+              "name": "state",
+              "value": "={{$item(0).$node[\"Validate Lead\"].json.lead.state}}"
+            },
+            {
+              "name": "postal_code",
+              "value": "={{$item(0).$node[\"Validate Lead\"].json.lead.zip}}"
+            },
+            {
+              "name": "include",
+              "value": "comparables"
+            }
+          ]
+        }
+      },
+      "id": "6",
+      "name": "Fetch Comps",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 2,
+      "position": [
+        950,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map(item => {\n  const validation = $item(0).$node[\"Validate Lead\"].json;\n  const lead = validation.lead;\n  const MIN_SQFT = validation.minSqft;\n  const toNumber = (value) => {\n    const num = Number(value);\n    return Number.isFinite(num) ? num : 0;\n  };\n  const now = new Date();\n  const sixMonthsAgo = new Date();\n  sixMonthsAgo.setMonth(now.getMonth() - 6);\n  const normalizeComp = (comp) => {\n    const saleDateRaw = comp.sale_date || comp.saleDate || comp.sold_date || comp.close_date || comp.closeDate || null;\n    const saleDate = saleDateRaw ? new Date(saleDateRaw) : null;\n    const distanceRaw = comp.distance_miles ?? comp.distanceMiles ?? comp.distance ?? comp.subject_distance ?? null;\n    const distance = distanceRaw !== null && distanceRaw !== undefined && distanceRaw !== '' ? Number(distanceRaw) : null;\n    const latRaw = comp.latitude ?? comp.lat ?? comp.comp_latitude ?? null;\n    const lonRaw = comp.longitude ?? comp.lon ?? comp.comp_longitude ?? null;\n    return {\n      address: comp.address?.full || comp.address?.line || comp.address || comp.location || '',\n      salePrice: toNumber(comp.sale_price ?? comp.salePrice ?? comp.sold_price ?? comp.price ?? comp.contract_price),\n      squareFeet: toNumber(comp.square_feet ?? comp.squareFeet ?? comp.gla ?? comp.living_area ?? comp.building_area),\n      bedrooms: toNumber(comp.bedrooms ?? comp.beds ?? comp.bed),\n      bathrooms: toNumber(comp.bathrooms ?? comp.baths ?? comp.bath),\n      saleDate,\n      distanceMiles: Number.isFinite(distance) ? Number(distance.toFixed(3)) : null,\n      latitude: latRaw ? Number(latRaw) : null,\n      longitude: lonRaw ? Number(lonRaw) : null\n    };\n  };\n  const compsSource = item.json.comparables || item.json.comps || item.json.data?.comps || item.json.data?.comparables || item.json.data?.sales || item.json.data || [];\n  const compsArray = Array.isArray(compsSource) ? compsSource : (compsSource.records || compsSource.results || []);\n  const normalized = compsArray.map(normalizeComp).filter(comp => comp.salePrice > 0 && comp.squareFeet > 0);\n  const haversine = (lat1, lon1, lat2, lon2) => {\n    if (![lat1, lon1, lat2, lon2].every(val => val !== null && val !== undefined && !Number.isNaN(val))) {\n      return null;\n    }\n    const toRad = (deg) => (deg * Math.PI) / 180;\n    const R = 3958.8;\n    const dLat = toRad(lat2 - lat1);\n    const dLon = toRad(lon2 - lon1);\n    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;\n    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));\n    return R * c;\n  };\n  const subjectLat = validation.rawPayload?.latitude ? Number(validation.rawPayload.latitude) : null;\n  const subjectLon = validation.rawPayload?.longitude ? Number(validation.rawPayload.longitude) : null;\n  normalized.forEach(comp => {\n    if (comp.distanceMiles === null && subjectLat !== null && subjectLon !== null && comp.latitude !== null && comp.longitude !== null) {\n      const distance = haversine(subjectLat, subjectLon, comp.latitude, comp.longitude);\n      comp.distanceMiles = Number.isFinite(distance) ? Number(distance.toFixed(3)) : null;\n    }\n  });\n  const filtered = normalized.filter(comp => {\n    if (!comp.saleDate || comp.saleDate < sixMonthsAgo) return false;\n    if (comp.squareFeet < MIN_SQFT) return false;\n    if (lead.sqft && Math.abs(comp.squareFeet - lead.sqft) > 250) return false;\n    if (lead.bedrooms && comp.bedrooms && Math.abs(comp.bedrooms - lead.bedrooms) > 1) return false;\n    if (lead.bathrooms && comp.bathrooms && Math.abs(comp.bathrooms - lead.bathrooms) > 1) return false;\n    if (comp.distanceMiles !== null && comp.distanceMiles > 0.5) return false;\n    return true;\n  });\n  const scored = normalized.map(comp => {\n    const sizeDelta = lead.sqft ? Math.abs(comp.squareFeet - lead.sqft) : 0;\n    const bedDelta = lead.bedrooms && comp.bedrooms ? Math.abs(comp.bedrooms - lead.bedrooms) * 150 : 0;\n    const bathDelta = lead.bathrooms && comp.bathrooms ? Math.abs(comp.bathrooms - lead.bathrooms) * 100 : 0;\n    const distanceScore = comp.distanceMiles !== null ? comp.distanceMiles * 200 : 120;\n    const ageScore = comp.saleDate ? Math.min((now - comp.saleDate) / (1000 * 60 * 60 * 24), 365) : 365;\n    return { ...comp, score: sizeDelta + bedDelta + bathDelta + distanceScore + ageScore };\n  });\n  const selectedPool = (filtered.length ? filtered : scored.sort((a, b) => a.score - b.score).slice(0, 5)).slice(0, 5);\n  const compsMath = selectedPool.map(comp => ({\n    address: comp.address,\n    salePrice: comp.salePrice,\n    squareFeet: comp.squareFeet,\n    saleDate: comp.saleDate ? comp.saleDate.toISOString() : null,\n    distanceMiles: comp.distanceMiles,\n    bedrooms: comp.bedrooms,\n    bathrooms: comp.bathrooms\n  }));\n  const compsDisplay = selectedPool.map(comp => ({\n    address: comp.address,\n    salePrice: comp.salePrice,\n    squareFeet: comp.squareFeet,\n    saleDate: comp.saleDate ? comp.saleDate.toISOString().split('T')[0] : null,\n    distanceMiles: comp.distanceMiles,\n    pricePerSqft: comp.salePrice && comp.squareFeet ? Number((comp.salePrice / comp.squareFeet).toFixed(2)) : null,\n    bedrooms: comp.bedrooms,\n    bathrooms: comp.bathrooms\n  }));\n  return {\n    json: {\n      lead,\n      repairRate: validation.repairRate,\n      minSqft: MIN_SQFT,\n      compsMath,\n      compsDisplay,\n      meta: {\n        totalFetched: normalized.length,\n        filteredCount: filtered.length\n      }\n    }\n  };\n});"
+      },
+      "id": "7",
+      "name": "Filter Comps",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items.map(item => {\n  const data = item.json;\n  const lead = data.lead;\n  const comps = data.compsMath || [];\n  if (!comps.length) {\n    return {\n      json: {\n        analysis: {\n          status: 'needs-comps',\n          message: 'No comps returned. Provide manual comps or adjust the API search.',\n          prompts: [\n            'Verify the property address and ZIP are correct.',\n            'Ensure the external comps API is returning closed sales.',\n            'Upload at least three comps with 800+ sqft to continue.'\n          ]\n        }\n      }\n    };\n  }\n  const prices = comps.map(comp => comp.salePrice).filter(value => Number.isFinite(value));\n  const avg = prices.reduce((sum, value) => sum + value, 0) / prices.length;\n  const sorted = [...prices].sort((a, b) => a - b);\n  const percentileIndex = (arr, p) => {\n    if (!arr.length) return 0;\n    const index = Math.round((arr.length - 1) * p);\n    return arr[Math.min(Math.max(index, 0), arr.length - 1)];\n  };\n  const low = percentileIndex(sorted, 0.1);\n  const high = percentileIndex(sorted, 0.9);\n  const arvMid = Math.round(avg);\n  const lowRounded = Math.round(low || avg);\n  const highRounded = Math.round(high || avg);\n  const repairCost = Math.round(lead.sqft * data.repairRate);\n  const formatCurrency = (value) => `$${Math.round(value).toLocaleString()}`;\n  const mao = Math.max(Math.round((arvMid * 0.7) - repairCost - 10000), 0);\n  const suggestedOffer = Math.max(Math.round((mao * 0.95) / 1000) * 1000, 0);\n  const assignmentFee = 10000;\n  const compsDisplay = data.compsDisplay || [];\n  const sellerAsk = lead.sellerAsk;\n  let recommendation = 'neutral';\n  let rationale = 'Need seller price to gauge spread.';\n  if (sellerAsk !== null) {\n    const spreadToMao = mao - sellerAsk;\n    if (spreadToMao >= assignmentFee) {\n      recommendation = 'green';\n      rationale = `Seller ask ${formatCurrency(sellerAsk)} leaves about ${formatCurrency(spreadToMao)} spread over MAO.`;\n    } else if (spreadToMao >= 0) {\n      recommendation = 'yellow';\n      rationale = `Seller ask ${formatCurrency(sellerAsk)} is within ${formatCurrency(spreadToMao)} of MAO. Push for a price drop to capture the full ${formatCurrency(assignmentFee)} fee.`;\n    } else {\n      recommendation = 'red';\n      rationale = `Seller ask ${formatCurrency(sellerAsk)} is ${formatCurrency(Math.abs(spreadToMao))} above MAO. Negotiate down or pass.`;\n    }\n  }\n  const arvExplanation = `ARV modeled from ${comps.length} sold comps (min 800 sqft) within 0.5 miles over the last six months.`;\n  const lowOfferScript = [\n    `Thanks for the rundown on ${lead.address}.`,\n    `The renovated neighbors are trading around ${formatCurrency(arvMid)}.`,\n    `After backing out roughly ${formatCurrency(repairCost)} in work and keeping room for my buyers, I'm at ${formatCurrency(mao)} all-in.`,\n    `If we can get paperwork wrapped near ${formatCurrency(suggestedOffer)}, I'll cover closing costs and keep the timeline flexible for you.`\n  ].join(' ');\n  const conditionDiscoveryScript = [\n    'Walk me through the interior - when were the kitchen and baths last updated?',\n    'Any known issues with the roof, HVAC, plumbing, or electrical?',\n    'Have you seen any foundation, moisture, or structural concerns?',\n    'If you kept the house, what repairs or upgrades would you tackle first?'\n  ].join('\\n');\n  const followUpTextScript = [\n    `Hey, circling back on ${lead.address}.`,\n    `I can still do ${formatCurrency(suggestedOffer)} cash, quick close, and I'll cover closing.`,\n    'Ready to lock it up and send the agreement?'\n  ].join(' ');\n  return {\n    json: {\n      analysis: {\n        status: 'underwritten',\n        property: lead,\n        compsUsed: compsDisplay,\n        breakdown: {\n          arv: `${formatCurrency(arvMid)} (range ${formatCurrency(lowRounded)} - ${formatCurrency(highRounded)})`,\n          repairCost: `${formatCurrency(repairCost)} (${data.repairRate}/sqft * ${lead.sqft} sqft)`,\n          mao: formatCurrency(mao),\n          suggestedAppointmentOfferPrice: formatCurrency(suggestedOffer),\n          targetAssignmentFee: formatCurrency(assignmentFee)\n        },\n        numbers: {\n          arvMid,\n          arvLow: lowRounded,\n          arvHigh: highRounded,\n          repairCost,\n          mao,\n          suggestedAppointmentOfferPrice: suggestedOffer,\n          targetAssignmentFee: assignmentFee\n        },\n        explanation: arvExplanation,\n        repairRatePerSqft: data.repairRate,\n        scripts: {\n          lowOffer: lowOfferScript,\n          conditionDiscovery: conditionDiscoveryScript,\n          followUpText: followUpTextScript\n        },\n        wholesaleOpportunity: {\n          verdict: recommendation,\n          rationale,\n          nextStep: recommendation === 'green' ? 'Lock up the contract near MAO and push it to buyers today.' : recommendation === 'yellow' ? 'Use the low-offer script to win a price drop, then re-run numbers.' : 'Stay in rapport, follow up later, or pass if the seller will not move.'\n        },\n        meta: {\n          compsReviewed: comps.length,\n          totalCompsFetched: data.meta?.totalFetched || 0,\n          filteredCompsCount: data.meta?.filteredCount || 0,\n          minSqftRequirement: data.minSqft\n        }\n      }\n    }\n  };\n});"
+      },
+      "id": "8",
+      "name": "Evaluate Deal",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        1450,
+        440
+      ]
+    },
+    {
+      "parameters": {
+        "responseBody": "={{$json.analysis}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "9",
+      "name": "Send Analysis",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1710,
+        440
+      ]
+    }
+  ],
+  "connections": {
+    "Inbound Lead": {
+      "main": [
+        [
+          {
+            "node": "Validate Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Lead": {
+      "main": [
+        [
+          {
+            "node": "Check Required Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Required Fields": {
+      "main": [
+        [
+          {
+            "node": "Need Info Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Comps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need Info Reply": {
+      "main": [
+        [
+          {
+            "node": "Respond Need Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Comps": {
+      "main": [
+        [
+          {
+            "node": "Filter Comps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Comps": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Deal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Deal": {
+      "main": [
+        [
+          {
+            "node": "Send Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "id": "WholesaleDealAnalyzer"
+}
